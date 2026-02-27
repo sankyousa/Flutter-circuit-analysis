@@ -94001,7 +94001,7 @@ f=A.U(j).h("R<1,aG<h,@>>")
 d=A.av(["edges",A.O(new A.R(j,new A.awV(),f),!0,f.h("ag.E")),"source",A.a([-1,-2],i),"output",A.a([n.d,n.e],i),"voltageValue",$.nT().b],h,g)}l=A.aF1(d,null,"  ")
 q=3
 s=6
-return A.aa(A.b5R(A.kv("http://127.0.0.1:5000"+A.m(m)),l,A.av(["Content-Type","application/json"],h,h)),$async$y7)
+return A.aa(A.b5R(A.kv("https://circuit-analysis-backend.onrender.com"+A.m(m)),l,A.av(["Content-Type","application/json"],h,h)),$async$y7)
 case 6:k=a0
 if(n.c!=null)if(k.b===200)n.a5(new A.awW(n,k))
 else n.a5(new A.awX(n,k))
