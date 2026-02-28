@@ -60,7 +60,7 @@ class _ResultPanelState extends State<ResultPanel> {
     
     try {
       final resp = await http.post(
-        Uri.parse('http://127.0.0.1:5000$path'),
+        Uri.parse('https://circuit-analysis-backend.onrender.com$path'),
         headers: {'Content-Type': 'application/json'},
         body: circuitJson,
       );
