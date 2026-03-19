@@ -37,6 +37,39 @@ def _cleanup_and_get_coeffs(expr, precision=4, zero_threshold=1e-9):
         return cleaned_coeffs[first_nonzero_idx:] if first_nonzero_idx != -1 else [0.0]
     except Exception: return []
 
+def _coeffs_to_latex(num_coeffs, den_coeffs, precision=4):
+    def _poly_str(coeffs):
+        if not coeffs: return '0'
+        terms = []
+        degree = len(coeffs) - 1
+        for i, c in enumerate(coeffs):
+            power = degree - i
+            c_rounded = round(c, precision)
+            if c_rounded == 0: continue
+            if power == 0:
+                terms.append(f'{c_rounded:g}')
+            elif power == 1:
+                if c_rounded == 1: terms.append('s')
+                elif c_rounded == -1: terms.append('-s')
+                else: terms.append(f'{c_rounded:g}s')
+            else:
+                if c_rounded == 1: terms.append(f's^{{{power}}}')
+                elif c_rounded == -1: terms.append(f'-s^{{{power}}}')
+                else: terms.append(f'{c_rounded:g}s^{{{power}}}')
+        if not terms: return '0'
+        result = terms[0]
+        for t in terms[1:]:
+            if t.startswith('-'):
+                result += ' - ' + t[1:]
+            else:
+                result += ' + ' + t
+        return result
+    num_str = _poly_str(num_coeffs)
+    den_str = _poly_str(den_coeffs)
+    if den_str == '1' or den_str == '1.0':
+        return num_str
+    return r'\frac{' + num_str + '}{' + den_str + '}'
+    
 def _split_edges(edges):
     Rs, Ls, Cs, wires, mosfets, diodes = [], [], [], [], [], []
     for e in edges:
@@ -355,7 +388,7 @@ def calculate_circuit():
 
     perf_ms = int((time.perf_counter() - t0)*1000)
     return jsonify({
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': _coeffs_to_latex(cleaned_num_coeffs, cleaned_den_coeffs), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'root_locus': root_locus_b64, 'bode_plot': bode_plot_b64,
         'perf_ms': perf_ms, 'mosfet_warn': warn_msg
     })
@@ -505,7 +538,7 @@ def calculate_average():
     perf_ms = int((time.perf_counter() - t0)*1000)
     
     response_data = {
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': _coeffs_to_latex(cleaned_num_coeffs, cleaned_den_coeffs), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'ssa_used': True, 'root_locus': root_locus_b64,
         'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
     }
