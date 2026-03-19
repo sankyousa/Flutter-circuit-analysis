@@ -355,7 +355,7 @@ def calculate_circuit():
 
     perf_ms = int((time.perf_counter() - t0)*1000)
     return jsonify({
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(sp.nsimplify(cleaned_H_expr, rational=False, tolerance=1e-4)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'root_locus': root_locus_b64, 'bode_plot': bode_plot_b64,
         'perf_ms': perf_ms, 'mosfet_warn': warn_msg
     })
@@ -505,7 +505,7 @@ def calculate_average():
     perf_ms = int((time.perf_counter() - t0)*1000)
     
     response_data = {
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(sp.nsimplify(cleaned_H_expr, rational=False, tolerance=1e-4)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'ssa_used': True, 'root_locus': root_locus_b64,
         'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
     }
