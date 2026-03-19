@@ -350,11 +350,15 @@ def calculate_circuit():
                 fig_bode.tight_layout()
                 bode_plot_b64 = fig_to_base_64(fig_bode)
 
-                # Compute H(jw) values for frequency domain plots
+                # Compute H(jw) values for frequency domain plots using NumPy (fast)
                 try:
                     freqs = np.logspace(0, 7, 500)
                     omegas = 2 * np.pi * freqs
-                    h_vals = np.array([complex(cleaned_H_expr.subs(s, 1j * w).evalf()) for w in omegas])
+                    jw = 1j * omegas
+                    num_vals = np.polyval(cleaned_num_coeffs, jw)
+                    den_vals = np.polyval(cleaned_den_coeffs, jw)
+                    den_vals_safe = np.where(np.abs(den_vals) > 1e-30, den_vals, 1e-30)
+                    h_vals = num_vals / den_vals_safe
                 except Exception as e:
                     print(f"[PLOT-ERROR] H(jw) evaluation failed: {e}")
                     h_vals = None
@@ -579,11 +583,15 @@ def calculate_average():
                 fig_bode.tight_layout()
                 bode_plot_b64 = fig_to_base_64(fig_bode)
 
-                # Compute H(jw) values for frequency domain plots
+                # Compute H(jw) values for frequency domain plots using NumPy (fast)
                 try:
                     freqs = np.logspace(0, 7, 500)
                     omegas = 2 * np.pi * freqs
-                    h_vals = np.array([complex(cleaned_H_expr.subs(s, 1j * w).evalf()) for w in omegas])
+                    jw = 1j * omegas
+                    num_vals = np.polyval(cleaned_num_coeffs, jw)
+                    den_vals = np.polyval(cleaned_den_coeffs, jw)
+                    den_vals_safe = np.where(np.abs(den_vals) > 1e-30, den_vals, 1e-30)
+                    h_vals = num_vals / den_vals_safe
                 except Exception as e:
                     print(f"[PLOT-ERROR] H(jw) evaluation failed: {e}")
                     h_vals = None
