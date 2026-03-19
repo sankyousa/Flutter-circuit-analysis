@@ -332,7 +332,7 @@ def calculate_circuit():
         if gain_at_zero.is_number and gain_at_zero.is_finite: dc_gain = float(gain_at_zero.evalf())
     except Exception: pass
     
-    root_locus_b64, bode_plot_b64, vf_plot_b64 = '', '', ''
+    root_locus_b64, bode_plot_b64 = '', ''
     if tf and cleaned_num_coeffs and cleaned_num_coeffs != [0.0]:
         try:
             if cleaned_den_coeffs:
@@ -351,61 +351,12 @@ def calculate_circuit():
                     phase_ax.grid(True, which='both', linestyle='--')
                 fig_bode.tight_layout()
                 bode_plot_b64 = fig_to_base_64(fig_bode)
-
-                # Compute H(jw) values for frequency domain plots using NumPy (fast)
-                try:
-                    freqs = np.logspace(0, 7, 200)
-                    jw = 1j * 2 * np.pi * freqs
-                    num_vals = np.polyval(cleaned_num_coeffs, jw)
-                    den_vals = np.polyval(cleaned_den_coeffs, jw)
-                    den_vals_safe = np.where(np.abs(den_vals) > 1e-30, den_vals, 1e-30)
-                    h_vals = num_vals / den_vals_safe
-                    h_mag = np.abs(h_vals)
-                    h_mag_safe = np.where(h_mag > 1e-15, h_mag, 1e-15)
-                except Exception as e:
-                    print(f"[PLOT-ERROR] H(jw) evaluation failed: {e}")
-                    h_vals = None
-
-                if h_vals is not None:
-                    # Combined V(f), I(f), Z(f) in one figure with 3 subplots
-                    try:
-                        fig_viz, (ax_vf, ax_if, ax_zf) = plt.subplots(3, 1, figsize=(8, 9))
-                        
-                        # V(f)
-                        v_mag = h_mag * vin
-                        ax_vf.semilogx(freqs, v_mag)
-                        ax_vf.set_title('Output Voltage |Vout(f)|')
-                        ax_vf.set_xlabel('Frequency (Hz)')
-                        ax_vf.set_ylabel('|Vout| (V)')
-                        ax_vf.grid(True, which='both', linestyle='--')
-
-                        # I(f)
-                        ax_if.semilogx(freqs, v_mag)
-                        ax_if.set_title('Output Current |Iout(f)| (proportional)')
-                        ax_if.set_xlabel('Frequency (Hz)')
-                        ax_if.set_ylabel('|Iout| (A)')
-                        ax_if.grid(True, which='both', linestyle='--')
-
-                        # Z(f)
-                        z_mag = vin / h_mag_safe
-                        ax_zf.loglog(freqs, z_mag)
-                        ax_zf.set_title('Impedance |Z(f)|')
-                        ax_zf.set_xlabel('Frequency (Hz)')
-                        ax_zf.set_ylabel('|Z| (Ω)')
-                        ax_zf.grid(True, which='both', linestyle='--')
-
-                        fig_viz.tight_layout()
-                        viz_plot_b64 = fig_to_base_64(fig_viz)
-                        vf_plot_b64 = viz_plot_b64
-                    except Exception as e: print(f"[PLOT-ERROR] V/I/Z(f) plot failed: {e}")
-
         except Exception as e: print(f"[PLOT-ERROR] Plotting failed: {e}")
 
     perf_ms = int((time.perf_counter() - t0)*1000)
     return jsonify({
         'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'root_locus': root_locus_b64, 'bode_plot': bode_plot_b64,
-        'viz_plot': vf_plot_b64,
         'perf_ms': perf_ms, 'mosfet_warn': warn_msg
     })
 
@@ -530,7 +481,7 @@ def calculate_average():
         except Exception:
             h_jw_str = "Calculation Error"
 
-    root_locus_b64, bode_plot_b64, vf_plot_b64 = '', '', ''
+    root_locus_b64, bode_plot_b64 = '', ''
     if tf and cleaned_num_coeffs and cleaned_num_coeffs != [0.0]:
         try:
             if cleaned_den_coeffs:
@@ -549,49 +500,6 @@ def calculate_average():
                     phase_ax.grid(True, which='both', linestyle='--')
                 fig_bode.tight_layout()
                 bode_plot_b64 = fig_to_base_64(fig_bode)
-
-                # Compute H(jw) and generate combined V(f)/I(f)/Z(f) plot
-                try:
-                    freqs = np.logspace(0, 7, 200)
-                    jw = 1j * 2 * np.pi * freqs
-                    num_vals = np.polyval(cleaned_num_coeffs, jw)
-                    den_vals = np.polyval(cleaned_den_coeffs, jw)
-                    den_vals_safe = np.where(np.abs(den_vals) > 1e-30, den_vals, 1e-30)
-                    h_vals = num_vals / den_vals_safe
-                    h_mag = np.abs(h_vals)
-                    h_mag_safe = np.where(h_mag > 1e-15, h_mag, 1e-15)
-                except Exception as e:
-                    print(f"[PLOT-ERROR] H(jw) evaluation failed: {e}")
-                    h_vals = None
-
-                if h_vals is not None:
-                    try:
-                        fig_viz, (ax_vf, ax_if, ax_zf) = plt.subplots(3, 1, figsize=(8, 9))
-                        
-                        v_mag = h_mag * vin
-                        ax_vf.semilogx(freqs, v_mag)
-                        ax_vf.set_title('Output Voltage |Vout(f)|')
-                        ax_vf.set_xlabel('Frequency (Hz)')
-                        ax_vf.set_ylabel('|Vout| (V)')
-                        ax_vf.grid(True, which='both', linestyle='--')
-
-                        ax_if.semilogx(freqs, v_mag)
-                        ax_if.set_title('Output Current |Iout(f)| (proportional)')
-                        ax_if.set_xlabel('Frequency (Hz)')
-                        ax_if.set_ylabel('|Iout| (A)')
-                        ax_if.grid(True, which='both', linestyle='--')
-
-                        z_mag = vin / h_mag_safe
-                        ax_zf.loglog(freqs, z_mag)
-                        ax_zf.set_title('Impedance |Z(f)|')
-                        ax_zf.set_xlabel('Frequency (Hz)')
-                        ax_zf.set_ylabel('|Z| (Ω)')
-                        ax_zf.grid(True, which='both', linestyle='--')
-
-                        fig_viz.tight_layout()
-                        vf_plot_b64 = fig_to_base_64(fig_viz)
-                    except Exception as e: print(f"[PLOT-ERROR] V/I/Z(f) plot failed: {e}")
-
         except Exception as e: print(f"[PLOT-ERROR] Plotting failed: {e}")
     
     perf_ms = int((time.perf_counter() - t0)*1000)
@@ -599,8 +507,7 @@ def calculate_average():
     response_data = {
         'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'ssa_used': True, 'root_locus': root_locus_b64,
-        'bode_plot': bode_plot_b64, 'viz_plot': vf_plot_b64,
-        'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
+        'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
     }
     if h_jw_str is not None:
         response_data['H_jw'] = h_jw_str
