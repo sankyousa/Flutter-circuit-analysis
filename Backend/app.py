@@ -40,22 +40,28 @@ def _cleanup_and_get_coeffs(expr, precision=4, zero_threshold=1e-9):
 def _coeffs_to_latex(num_coeffs, den_coeffs, precision=4):
     def _poly_str(coeffs):
         if not coeffs: return '0'
+        def _fmt(c):
+            c = round(c, precision)
+            if c == int(c): return str(int(c))
+            return f'{c:.{precision}f}'.rstrip('0').rstrip('.')
         terms = []
         degree = len(coeffs) - 1
         for i, c in enumerate(coeffs):
             power = degree - i
             c_rounded = round(c, precision)
             if c_rounded == 0: continue
+            c_str = _fmt(abs(c_rounded))
+            sign_neg = c_rounded < 0
             if power == 0:
-                terms.append(f'{c_rounded:g}')
+                terms.append(('-' + c_str) if sign_neg else c_str)
             elif power == 1:
-                if c_rounded == 1: terms.append('s')
-                elif c_rounded == -1: terms.append('-s')
-                else: terms.append(f'{c_rounded:g}s')
+                if c_str == '1': body = 's'
+                else: body = c_str + 's'
+                terms.append(('-' + body) if sign_neg else body)
             else:
-                if c_rounded == 1: terms.append(f's^{{{power}}}')
-                elif c_rounded == -1: terms.append(f'-s^{{{power}}}')
-                else: terms.append(f'{c_rounded:g}s^{{{power}}}')
+                if c_str == '1': body = f's^{{{power}}}'
+                else: body = c_str + f's^{{{power}}}'
+                terms.append(('-' + body) if sign_neg else body)
         if not terms: return '0'
         result = terms[0]
         for t in terms[1:]:
