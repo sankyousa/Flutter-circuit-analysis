@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import sympy as sp
 from sympy import symbols, Eq, solve, simplify, oo, factor, latex, Matrix, zeros, eye, expand
 from sympy.abc import s
@@ -20,6 +21,7 @@ except ImportError:
 
 EPS_NUM = 1e-12
 app = Flask(__name__)
+CORS(app)
 
 def _cleanup_and_get_coeffs(expr, precision=8, zero_threshold=1e-9):
     if expr.is_zero: return [0.0]
