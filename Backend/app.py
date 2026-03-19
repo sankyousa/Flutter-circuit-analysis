@@ -23,7 +23,7 @@ EPS_NUM = 1e-12
 app = Flask(__name__)
 CORS(app)
 
-def _cleanup_and_get_coeffs(expr, precision=8, zero_threshold=1e-9):
+def _cleanup_and_get_coeffs(expr, precision=4, zero_threshold=1e-9):
     if expr.is_zero: return [0.0]
     try:
         p = sp.Poly(sp.expand(expr), s)
@@ -355,7 +355,7 @@ def calculate_circuit():
 
     perf_ms = int((time.perf_counter() - t0)*1000)
     return jsonify({
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': latex(sp.nsimplify(cleaned_H_expr, rational=False, tolerance=1e-4)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'root_locus': root_locus_b64, 'bode_plot': bode_plot_b64,
         'perf_ms': perf_ms, 'mosfet_warn': warn_msg
     })
@@ -505,7 +505,7 @@ def calculate_average():
     perf_ms = int((time.perf_counter() - t0)*1000)
     
     response_data = {
-        'tf': str(cleaned_H_expr), 'tf_latex': latex(factor(cleaned_H_expr)), 'zeros': zeros,
+        'tf': str(cleaned_H_expr), 'tf_latex': latex(sp.nsimplify(cleaned_H_expr, rational=False, tolerance=1e-4)), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'ssa_used': True, 'root_locus': root_locus_b64,
         'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
     }
