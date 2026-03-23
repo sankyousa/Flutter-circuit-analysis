@@ -170,57 +170,143 @@ def judge_diode_on(edge: dict, node_voltages: dict, v_th_ignored: float = 0.0, e
     return None
 
 def _node_label(n):
-    """Human-readable node label for LaTeX."""
+    """Human-readable node label for LaTeX (no \\text)."""
     if n == -1: return 'V^+'
     if n == -2: return 'GND'
     return str(n)
 
-def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output):
-    """Build a list of derivation step dicts for the front-end."""
+def _fmt_val(v):
+    """Format a numeric value nicely for LaTeX."""
+    if v == int(v): return str(int(v))
+    return f'{v:.4g}'
+
+def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output, original_edges=None):
+    """Build a list of derivation step dicts for the front-end.
+    
+    Args:
+        edges: the linearized edge list (after diode/MOSFET → resistor replacement)
+        original_edges: the raw edge list before linearization (optional, for showing small-signal step)
+    """
     src_p, src_n = source
     out_p, out_n = output
     n = len(non_gnd_nodes)
     m = len(Ls)
     steps = []
 
-    # ── Step 1: Node Identification ──
-    node_lines = [f'\\text{{GND (reference)}}: \\text{{Node }} {_node_label(src_n)}']
+    # ── Step 1: Small Signal Linearization ──
+    # Show what nonlinear components were replaced with linear equivalents.
+    # Compare original_edges vs edges to find replacements.
+    if original_edges:
+        lin_lines = []
+        for orig in original_edges:
+            otype = orig.get('type')
+            fn, tn = orig.get('from', '?'), orig.get('to', '?')
+            if otype == 'diode':
+                ctrl = orig.get('control', {})
+                ct = ctrl.get('type', '')
+                r_on = orig.get('internal_resistance', 0.01)
+                if ct == 'auto':
+                    lin_lines.append(
+                        f'Diode \\; ({_node_label(fn)} \\to {_node_label(tn)}):'
+                        f' \\; auto \\to R_{{on}} = {_fmt_val(r_on)} \\, \\Omega \\; / \\; open'
+                    )
+                elif ct == 'fixed':
+                    state = 'ON' if ctrl.get('state') == 'on' else 'OFF'
+                    lin_lines.append(
+                        f'Diode \\; ({_node_label(fn)} \\to {_node_label(tn)}):'
+                        f' \\; fixed \\; {state}'
+                        + (f' \\to R_{{on}} = {_fmt_val(r_on)} \\, \\Omega' if state == 'ON' else ' \\to open')
+                    )
+            elif otype == 'mosfet':
+                ctrl = orig.get('control', {})
+                ct = ctrl.get('type', '')
+                rds = orig.get('rds_on', 0.01)
+                if ct == 'node':
+                    lin_lines.append(
+                        f'MOSFET \\; ({_node_label(fn)} \\to {_node_label(tn)}):'
+                        f' \\; V_{{gs}} \\; driven \\to R_{{ds}} = {_fmt_val(rds)} \\, \\Omega \\; / \\; open'
+                    )
+                elif ct == 'fixed':
+                    state = 'ON' if ctrl.get('state') == 'on' else 'OFF'
+                    lin_lines.append(
+                        f'MOSFET \\; ({_node_label(fn)} \\to {_node_label(tn)}):'
+                        f' \\; fixed \\; {state}'
+                        + (f' \\to R_{{ds}} = {_fmt_val(rds)} \\, \\Omega' if state == 'ON' else ' \\to open')
+                    )
+                elif ct == 'timing':
+                    intervals = ctrl.get('intervals', [])
+                    d_str = ','.join([f'{iv[0]}\\sim{iv[1]}' for iv in intervals])
+                    lin_lines.append(
+                        f'MOSFET \\; ({_node_label(fn)} \\to {_node_label(tn)}):'
+                        f' \\; D = [{d_str}] \\to R_{{ds}} = {_fmt_val(rds)} \\, \\Omega \\; (ON) \\; / \\; open \\; (OFF)'
+                    )
+        if lin_lines:
+            steps.append({
+                'title': 'Step 1: Small-Signal Linearization',
+                'latex': ' \\\\ '.join(lin_lines),
+            })
+        else:
+            steps.append({
+                'title': 'Step 1: Small-Signal Linearization',
+                'latex': 'No \\; nonlinear \\; components. \\; All \\; elements \\; are \\; linear \\; (R, L, C).',
+            })
+    else:
+        steps.append({
+            'title': 'Step 1: Small-Signal Linearization',
+            'latex': 'No \\; nonlinear \\; components. \\; All \\; elements \\; are \\; linear \\; (R, L, C).',
+        })
+
+    # ── Step 2: Node Identification & Variables ──
+    node_lines = [f'GND \\; (reference): \\; Node \\; {_node_label(src_n)}']
     for node in non_gnd_nodes:
         idx = nod2idx[node]
         if node >= 1000:
-            node_lines.append(f'V_{{{idx+1}}} \\to \\text{{virtual node {node}}}')
+            node_lines.append(f'V_{{{idx+1}}} \\to Node \\; {node} \\; (virtual)')
         else:
-            node_lines.append(f'V_{{{idx+1}}} \\to \\text{{Node }} {_node_label(node)}')
+            node_lines.append(f'V_{{{idx+1}}} \\to Node \\; {_node_label(node)}')
     for i in range(m):
-        node_lines.append(f'I_{{L_{{{i+1}}}}} \\to \\text{{inductor current}}')
-    node_lines.append(f'I_{{V_{{in}}}} \\to \\text{{source current}}')
+        node_lines.append(f'I_{{L_{{{i+1}}}}} : \\; inductor \\; current')
+    node_lines.append(f'I_{{V_{{in}}}} : \\; source \\; current')
     steps.append({
-        'title': 'Step 1: Node Identification',
+        'title': 'Step 2: Node Identification & Unknown Variables',
         'latex': ' \\\\ '.join(node_lines),
     })
 
-    # ── Step 2: Component Stamps ──
+    # ── Step 3: Admittance Stamps (linearized components) ──
     comp_lines = []
     for e in edges:
         t = e.get('type')
         f_n, t_n = e['from'], e['to']
         val = e.get('value', 0)
         if t == 'resistor':
-            comp_lines.append(f'R = {val}\\,\\Omega \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad G = 1/R')
+            comp_lines.append(
+                f'R = {_fmt_val(val)} \\, \\Omega'
+                f' \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})'
+                f' \\quad \\Rightarrow \\quad G = {_fmt_val(1.0/val if val > 0 else 1e9)}'
+            )
         elif t == 'capacitor':
-            comp_lines.append(f'C = {val}\\,\\text{{F}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad Y = sC')
+            comp_lines.append(
+                f'C = {_fmt_val(val)} \\, F'
+                f' \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})'
+                f' \\quad \\Rightarrow \\quad Y = sC = {_fmt_val(val)} \\cdot s'
+            )
         elif t == 'inductor':
-            comp_lines.append(f'L = {val}\\,\\text{{H}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad Z = sL')
+            comp_lines.append(
+                f'L = {_fmt_val(val)} \\, H'
+                f' \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})'
+                f' \\quad \\Rightarrow \\quad Z = sL = {_fmt_val(val)} \\cdot s'
+            )
         elif t == 'none':
-            comp_lines.append(f'\\text{{Wire}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})')
+            comp_lines.append(
+                f'Wire \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})'
+                f' \\quad \\Rightarrow \\quad G \\approx \\infty'
+            )
     steps.append({
-        'title': 'Step 2: Component Stamps',
-        'latex': ' \\\\ '.join(comp_lines) if comp_lines else '\\text{No components}',
+        'title': 'Step 3: Admittance Stamps',
+        'latex': ' \\\\ '.join(comp_lines) if comp_lines else 'No \\; components',
     })
 
-    # ── Step 3: MNA Matrix Equation [M][X] = [F] ──
-    dim = n + m + 1
-    # Build X vector labels
+    # ── Step 4: MNA Matrix Equation [M][X] = [F] ──
     x_labels = []
     for node in non_gnd_nodes:
         idx = nod2idx[node]
@@ -235,32 +321,27 @@ def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, 
         f_latex = latex(F)
         mna_eq = m_latex + ' \\cdot ' + x_latex + ' = ' + f_latex
     except Exception:
-        mna_eq = '\\text{(matrix too large to display)}'
+        mna_eq = '(matrix \\; too \\; large \\; to \\; display)'
     steps.append({
-        'title': 'Step 3: MNA Matrix Equation  [M]·[X] = [F]',
+        'title': 'Step 4: MNA Matrix Equation  [Y]·[X] = [I]',
         'latex': mna_eq,
     })
 
-    # ── Step 4: Solve for Output Voltage ──
-    v_out_p = X_sol_vec[nod2idx[out_p], 0] if out_p in nod2idx else 0
-    v_out_n = X_sol_vec[nod2idx[out_n], 0] if out_n in nod2idx else 0
-    vout_expr = simplify(v_out_p - v_out_n)
+    # ── Step 5: Solve → Transfer Function ──
     out_p_label = f'V({_node_label(out_p)})'
     out_n_label = f'V({_node_label(out_n)})'
     steps.append({
-        'title': 'Step 4: Output Voltage',
-        'latex': f'V_{{out}} = {out_p_label} - {out_n_label}',
-    })
-
-    # ── Step 5: Transfer Function ──
-    steps.append({
-        'title': 'Step 5: Transfer Function',
-        'latex': r'H(s) = \frac{V_{out}(s)}{V_{in}(s)} = \frac{' + out_p_label + ' - ' + out_n_label + r'}{V_{in}} \quad \Rightarrow \quad \text{(see H(s) above)}',
+        'title': 'Step 5: Solve for H(s)',
+        'latex': (
+            f'V_{{out}} = {out_p_label} - {out_n_label}'
+            r' \quad \Rightarrow \quad '
+            r'H(s) = \frac{V_{out}(s)}{V_{in}(s)}'
+        ),
     })
 
     return steps
 
-def build_state_matrices(edges_key, source, output):
+def build_state_matrices(edges_key, source, output, original_edges=None):
     edges = json.loads(edges_key)
     src_p, src_n = source
     Rs, Ls, Cs, wires, _, _ = _split_edges(edges)
@@ -306,7 +387,8 @@ def build_state_matrices(edges_key, source, output):
     # Build derivation steps for front-end display
     try:
         derivation_steps = _build_derivation_steps(
-            edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output)
+            edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output,
+            original_edges=original_edges)
     except Exception as e:
         print(f"[STEPS] Failed to build derivation steps: {e}")
         derivation_steps = []
@@ -462,7 +544,7 @@ def calculate_circuit():
     final_topo = consistent_topos[0]
     
     try:
-        solution = build_state_matrices(json.dumps(final_topo), source, output)
+        solution = build_state_matrices(json.dumps(final_topo), source, output, original_edges=base_edges)
         H_expr = solution['H']
         derivation_steps = solution.get('steps', [])
     except RuntimeError as e:
@@ -594,7 +676,7 @@ def calculate_average():
             final_topo_for_interval = consistent_topos[0]
             
             try:
-                solution = build_state_matrices(json.dumps(final_topo_for_interval), source, output)
+                solution = build_state_matrices(json.dumps(final_topo_for_interval), source, output, original_edges=interval_base_edges)
                 Hi = solution['H']
                 if not ssa_derivation_steps:
                     ssa_derivation_steps = solution.get('steps', [])
