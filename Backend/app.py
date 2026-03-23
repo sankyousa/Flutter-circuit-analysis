@@ -169,6 +169,97 @@ def judge_diode_on(edge: dict, node_voltages: dict, v_th_ignored: float = 0.0, e
     except (ZeroDivisionError, ValueError): pass
     return None
 
+def _node_label(n):
+    """Human-readable node label for LaTeX."""
+    if n == -1: return 'V^+'
+    if n == -2: return 'GND'
+    return str(n)
+
+def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output):
+    """Build a list of derivation step dicts for the front-end."""
+    src_p, src_n = source
+    out_p, out_n = output
+    n = len(non_gnd_nodes)
+    m = len(Ls)
+    steps = []
+
+    # ── Step 1: Node Identification ──
+    node_lines = [f'\\text{{GND (reference)}}: \\text{{Node }} {_node_label(src_n)}']
+    for node in non_gnd_nodes:
+        idx = nod2idx[node]
+        if node >= 1000:
+            node_lines.append(f'V_{{{idx+1}}} \\to \\text{{virtual node {node}}}')
+        else:
+            node_lines.append(f'V_{{{idx+1}}} \\to \\text{{Node }} {_node_label(node)}')
+    for i in range(m):
+        node_lines.append(f'I_{{L_{{{i+1}}}}} \\to \\text{{inductor current}}')
+    node_lines.append(f'I_{{V_{{in}}}} \\to \\text{{source current}}')
+    steps.append({
+        'title': 'Step 1: Node Identification',
+        'latex': ' \\\\ '.join(node_lines),
+    })
+
+    # ── Step 2: Component Stamps ──
+    comp_lines = []
+    for e in edges:
+        t = e.get('type')
+        f_n, t_n = e['from'], e['to']
+        val = e.get('value', 0)
+        if t == 'resistor':
+            comp_lines.append(f'R = {val}\\,\\Omega \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad G = 1/R')
+        elif t == 'capacitor':
+            comp_lines.append(f'C = {val}\\,\\text{{F}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad Y = sC')
+        elif t == 'inductor':
+            comp_lines.append(f'L = {val}\\,\\text{{H}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)}) \\quad Z = sL')
+        elif t == 'none':
+            comp_lines.append(f'\\text{{Wire}} \\quad ({_node_label(f_n)} \\to {_node_label(t_n)})')
+    steps.append({
+        'title': 'Step 2: Component Stamps',
+        'latex': ' \\\\ '.join(comp_lines) if comp_lines else '\\text{No components}',
+    })
+
+    # ── Step 3: MNA Matrix Equation [M][X] = [F] ──
+    dim = n + m + 1
+    # Build X vector labels
+    x_labels = []
+    for node in non_gnd_nodes:
+        idx = nod2idx[node]
+        x_labels.append(f'V_{{{idx+1}}}')
+    for i in range(m):
+        x_labels.append(f'I_{{L_{{{i+1}}}}}')
+    x_labels.append('I_{V_{in}}')
+
+    try:
+        m_latex = latex(M)
+        x_latex = latex(Matrix(sp.symbols(' '.join(x_labels))))
+        f_latex = latex(F)
+        mna_eq = m_latex + ' \\cdot ' + x_latex + ' = ' + f_latex
+    except Exception:
+        mna_eq = '\\text{(matrix too large to display)}'
+    steps.append({
+        'title': 'Step 3: MNA Matrix Equation  [M]·[X] = [F]',
+        'latex': mna_eq,
+    })
+
+    # ── Step 4: Solve for Output Voltage ──
+    v_out_p = X_sol_vec[nod2idx[out_p], 0] if out_p in nod2idx else 0
+    v_out_n = X_sol_vec[nod2idx[out_n], 0] if out_n in nod2idx else 0
+    vout_expr = simplify(v_out_p - v_out_n)
+    out_p_label = f'V({_node_label(out_p)})'
+    out_n_label = f'V({_node_label(out_n)})'
+    steps.append({
+        'title': 'Step 4: Output Voltage',
+        'latex': f'V_{{out}} = {out_p_label} - {out_n_label}',
+    })
+
+    # ── Step 5: Transfer Function ──
+    steps.append({
+        'title': 'Step 5: Transfer Function',
+        'latex': r'H(s) = \frac{V_{out}(s)}{V_{in}(s)} = \frac{' + out_p_label + ' - ' + out_n_label + r'}{V_{in}} \quad \Rightarrow \quad \text{(see H(s) above)}',
+    })
+
+    return steps
+
 def build_state_matrices(edges_key, source, output):
     edges = json.loads(edges_key)
     src_p, src_n = source
@@ -211,7 +302,16 @@ def build_state_matrices(edges_key, source, output):
     v_out_p = X_sol_vec[nod2idx[out_p], 0] if out_p in nod2idx else 0
     v_out_n = X_sol_vec[nod2idx[out_n], 0] if out_n in nod2idx else 0
     H_expr = simplify(v_out_p - v_out_n)
-    return {'H': H_expr, 'solution_vector': X_sol_vec, 'node_map': nod2idx, 'gnd_node': src_n}
+
+    # Build derivation steps for front-end display
+    try:
+        derivation_steps = _build_derivation_steps(
+            edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output)
+    except Exception as e:
+        print(f"[STEPS] Failed to build derivation steps: {e}")
+        derivation_steps = []
+
+    return {'H': H_expr, 'solution_vector': X_sol_vec, 'node_map': nod2idx, 'gnd_node': src_n, 'steps': derivation_steps}
 
 def enumerate_all_consistent(base_edges, source, output, vin, max_states=256):
     auto_components = []
@@ -364,9 +464,11 @@ def calculate_circuit():
     try:
         solution = build_state_matrices(json.dumps(final_topo), source, output)
         H_expr = solution['H']
+        derivation_steps = solution.get('steps', [])
     except RuntimeError as e:
         print(f"Warning: The final stable topology resulted in a singular matrix ({e}). The transfer function is set to 0.")
         H_expr = 0
+        derivation_steps = []
 
     num_sym, den_sym = sp.fraction(sp.together(H_expr))
     cleaned_num_coeffs = _cleanup_and_get_coeffs(num_sym)
@@ -407,7 +509,8 @@ def calculate_circuit():
     return jsonify({
         'tf': str(cleaned_H_expr), 'tf_latex': _coeffs_to_latex(cleaned_num_coeffs, cleaned_den_coeffs), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'root_locus': root_locus_b64, 'bode_plot': bode_plot_b64,
-        'perf_ms': perf_ms, 'mosfet_warn': warn_msg
+        'perf_ms': perf_ms, 'mosfet_warn': warn_msg,
+        'derivation_steps': derivation_steps,
     })
 
 @app.route('/calculate_average', methods=['POST'])
@@ -458,6 +561,7 @@ def calculate_average():
     H_avg_expr = 0
     topo_cache = {}
     final_warnings = []
+    ssa_derivation_steps = []  # capture steps from first interval
     for i, interval in enumerate(intervals):
         t_mid = (interval['start'] + interval['end']) / 2.0
         print(f"\n--- Analyzing State {i+1}: Time interval t = [{interval['start']:.2f}, {interval['end']:.2f}) ---")
@@ -492,6 +596,8 @@ def calculate_average():
             try:
                 solution = build_state_matrices(json.dumps(final_topo_for_interval), source, output)
                 Hi = solution['H']
+                if not ssa_derivation_steps:
+                    ssa_derivation_steps = solution.get('steps', [])
             except RuntimeError as e:
                 print(f"  -> [MNA Solver] Warning: Topology of state {i+1} resulted in a singular matrix ({e}). Contribution to transfer function is 0.")
                 Hi = 0
@@ -557,7 +663,8 @@ def calculate_average():
     response_data = {
         'tf': str(cleaned_H_expr), 'tf_latex': _coeffs_to_latex(cleaned_num_coeffs, cleaned_den_coeffs), 'zeros': zeros,
         'poles': poles, 'dc_gain': dc_gain, 'ssa_used': True, 'root_locus': root_locus_b64,
-        'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings)))
+        'bode_plot': bode_plot_b64, 'perf_ms': perf_ms, 'mosfet_warn': " | ".join(list(set(final_warnings))),
+        'derivation_steps': ssa_derivation_steps,
     }
     if h_jw_str is not None:
         response_data['H_jw'] = h_jw_str
