@@ -38,6 +38,17 @@ def _cleanup_and_get_coeffs(expr, precision=4, zero_threshold=1e-9):
     except Exception: return []
 
 def _coeffs_to_latex(num_coeffs, den_coeffs, precision=4):
+    # ── Normalize: divide both num and den by the leading den coefficient
+    #    so that the denominator becomes monic (leading coeff = 1).
+    #    This removes huge coefficients caused by wire conductance (1e9).
+    if den_coeffs and den_coeffs[0] != 0:
+        lead = den_coeffs[0]
+        num_coeffs = [c / lead for c in num_coeffs]
+        den_coeffs = [c / lead for c in den_coeffs]
+    # ── Re-round after normalization to clean up floating-point noise
+    num_coeffs = [round(c, precision) for c in num_coeffs]
+    den_coeffs = [round(c, precision) for c in den_coeffs]
+
     def _poly_str(coeffs):
         if not coeffs: return '0'
         def _fmt(c):
