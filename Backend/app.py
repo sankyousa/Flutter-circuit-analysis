@@ -52,7 +52,18 @@ def _coeffs_to_latex(num_coeffs, den_coeffs, precision=4):
     def _poly_str(coeffs):
         if not coeffs: return '0'
         def _fmt(c):
+            ac = abs(c)
+            if ac == 0: return '0'
+            # Use engineering notation for very large or very small BEFORE rounding
+            if ac >= 1000 or (ac > 0 and ac < 0.001):
+                exp = int(math.floor(math.log10(ac)))
+                mantissa = ac / (10 ** exp)
+                mantissa = round(mantissa, precision)
+                if mantissa == int(mantissa):
+                    return f'{int(mantissa)} \\times 10^{{{exp}}}'
+                return f'{mantissa:.{precision}g} \\times 10^{{{exp}}}'
             c = round(c, precision)
+            if c == 0: return '0'
             if c == int(c): return str(int(c))
             return f'{c:.{precision}f}'.rstrip('0').rstrip('.')
         terms = []
@@ -182,106 +193,225 @@ def _node_label_latex(n):
     return str(n)
 
 def _fmt_val(v):
-    """Format a numeric value nicely."""
-    if v == int(v): return str(int(v))
-    return f'{v:.4g}'
+    """Format a numeric value with engineering notation for large/small numbers."""
+    if v == 0: return '0'
+    av = abs(v)
+    sign = '-' if v < 0 else ''
+    if av == int(av) and 0.001 <= av <= 999:
+        return f'{sign}{int(av)}'
+    if 0.001 <= av <= 999:
+        s = f'{av:.4g}'
+        return f'{sign}{s}'
+    # engineering notation for large / small
+    exp = int(math.floor(math.log10(av)))
+    mantissa = av / (10 ** exp)
+    if mantissa == int(mantissa):
+        return f'{sign}{int(mantissa)}e{exp}'
+    return f'{sign}{mantissa:.3g}e{exp}'
+
+def _fmt_val_latex(v):
+    """Format for LaTeX with x10^{n} notation."""
+    if v == 0: return '0'
+    av = abs(v)
+    sign = '-' if v < 0 else ''
+    if av == int(av) and 0.001 <= av <= 999:
+        return f'{sign}{int(av)}'
+    if 0.001 <= av <= 999:
+        s = f'{av:.4g}'
+        return f'{sign}{s}'
+    exp = int(math.floor(math.log10(av)))
+    mantissa = av / (10 ** exp)
+    if mantissa == int(mantissa):
+        return f'{sign}{int(mantissa)} \\times 10^{{{exp}}}'
+    return f'{sign}{mantissa:.3g} \\times 10^{{{exp}}}'
 
 def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, source, output, raw_user_edges=None):
-    """Build derivation steps. Each step has 'title', 'content', and 'type' ('text' or 'latex')."""
+    """Build detailed derivation steps for the front-end."""
     src_p, src_n = source
     out_p, out_n = output
     n = len(non_gnd_nodes)
     m = len(Ls)
     steps = []
 
-    # ── Step 1: Small-Signal Linearization (type: text) ──
-    lin_lines = []
+    # ═══════════════════════════════════════════════════════════════════
+    # Step 1: Small-Signal Linearization
+    # ═══════════════════════════════════════════════════════════════════
+    header = (
+        'In small-signal analysis, nonlinear components (Diodes and MOSFETs) are '
+        'linearized around their DC operating point and replaced with linear '
+        'equivalents, so that Modified Nodal Analysis (MNA) can be applied.\n\n'
+    )
     scan_edges = raw_user_edges if raw_user_edges else []
+    lin_lines = []
     for orig in scan_edges:
         otype = orig.get('type')
         fn, tn = orig.get('from', '?'), orig.get('to', '?')
+        loc = f'{_node_label_plain(fn)} -> {_node_label_plain(tn)}'
+
         if otype == 'diode':
             ctrl = orig.get('control', {})
             ct = ctrl.get('type', '')
             r_on = orig.get('internal_resistance', 0.01)
             vf = orig.get('forward_voltage_drop', 0.1)
+
+            lin_lines.append(f'  Diode ({loc}):')
+            lin_lines.append(f'    Forward voltage drop Vf = {_fmt_val(vf)} V')
+            lin_lines.append(f'    ON-state resistance  R_on = {_fmt_val(r_on)} Ohm')
             if ct == 'auto':
-                lin_lines.append(f'  Diode ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Auto mode  →  R_on={_fmt_val(r_on)}Ω (ON) / Open (OFF), Vf={_fmt_val(vf)}V')
+                lin_lines.append(f'    Control: Auto mode')
+                lin_lines.append(f'      The system checks V_anode - V_cathode > Vf at the DC operating point.')
+                lin_lines.append(f'      If ON:  replaced by R_on = {_fmt_val(r_on)} Ohm (short-circuit model)')
+                lin_lines.append(f'      If OFF: removed from circuit (open-circuit model)')
             elif ct == 'fixed':
                 state = 'ON' if ctrl.get('state') == 'on' else 'OFF'
+                lin_lines.append(f'    Control: Fixed {state}')
                 if state == 'ON':
-                    lin_lines.append(f'  Diode ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Fixed ON  →  Replaced by R_on={_fmt_val(r_on)}Ω')
+                    lin_lines.append(f'      -> Replaced by R_on = {_fmt_val(r_on)} Ohm')
                 else:
-                    lin_lines.append(f'  Diode ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Fixed OFF  →  Removed (open circuit)')
+                    lin_lines.append(f'      -> Removed (open circuit)')
+            lin_lines.append('')
+
         elif otype == 'mosfet':
             ctrl = orig.get('control', {})
             ct = ctrl.get('type', '')
             rds = orig.get('rds_on', 0.01)
+            vth = orig.get('threshold_voltage', 0.1)
+            mtype = orig.get('mosfetType', 'nmos').upper()
+
+            lin_lines.append(f'  MOSFET ({loc}), {mtype}:')
+            lin_lines.append(f'    Threshold voltage Vth = {_fmt_val(vth)} V')
+            lin_lines.append(f'    ON-state resistance Rds(on) = {_fmt_val(rds)} Ohm')
             if ct == 'timing':
                 intervals = ctrl.get('intervals', [])
                 d_str = ', '.join([f'{iv[0]}~{iv[1]}' for iv in intervals])
-                lin_lines.append(f'  MOSFET ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Timing D=[{d_str}]  →  Rds={_fmt_val(rds)}Ω (ON) / Open (OFF)')
+                lin_lines.append(f'    Control: Timing (duty cycle D = [{d_str}])')
+                lin_lines.append(f'      This is a switching component for State-Space Averaging (SSA).')
+                lin_lines.append(f'      During ON interval:  replaced by Rds(on) = {_fmt_val(rds)} Ohm')
+                lin_lines.append(f'      During OFF interval: removed (open circuit)')
+                lin_lines.append(f'      The final H(s) is the time-weighted average of each interval.')
             elif ct == 'fixed':
                 state = 'ON' if ctrl.get('state') == 'on' else 'OFF'
+                lin_lines.append(f'    Control: Fixed {state}')
                 if state == 'ON':
-                    lin_lines.append(f'  MOSFET ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Fixed ON  →  Replaced by Rds={_fmt_val(rds)}Ω')
+                    lin_lines.append(f'      -> Replaced by Rds(on) = {_fmt_val(rds)} Ohm')
                 else:
-                    lin_lines.append(f'  MOSFET ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Fixed OFF  →  Removed (open circuit)')
+                    lin_lines.append(f'      -> Removed (open circuit)')
             elif ct == 'node':
                 gate = ctrl.get('gate', '?')
-                lin_lines.append(f'  MOSFET ({_node_label_plain(fn)} → {_node_label_plain(tn)}):  Vgs-driven (gate=Node {gate})  →  Rds={_fmt_val(rds)}Ω (ON) / Open (OFF)')
+                lin_lines.append(f'    Control: Voltage-driven (gate = Node {gate})')
+                if mtype == 'NMOS':
+                    lin_lines.append(f'      ON condition: V_gate - V_source > Vth = {_fmt_val(vth)} V')
+                else:
+                    lin_lines.append(f'      ON condition: V_gate - V_source < Vth = {_fmt_val(vth)} V')
+                lin_lines.append(f'      If ON:  replaced by Rds(on) = {_fmt_val(rds)} Ohm')
+                lin_lines.append(f'      If OFF: removed (open circuit)')
+                lin_lines.append(f'      The system solves for a self-consistent DC operating point.')
+            lin_lines.append('')
+
     if lin_lines:
         steps.append({
             'title': 'Step 1: Small-Signal Linearization',
-            'content': 'Nonlinear components replaced with linear equivalents:\n' + '\n'.join(lin_lines),
+            'content': header + '\n'.join(lin_lines),
             'type': 'text',
         })
     else:
         steps.append({
             'title': 'Step 1: Small-Signal Linearization',
-            'content': 'No nonlinear components (Diode/MOSFET). All elements are linear (R, L, C).',
+            'content': header + 'No nonlinear components (Diode/MOSFET) found in this circuit.\nAll elements are already linear (R, L, C, Wire). MNA can be applied directly.',
             'type': 'text',
         })
 
-    # ── Step 2: Node Identification (type: text) ──
-    node_lines = [f'  GND (reference):  {_node_label_plain(src_n)}']
+    # ═══════════════════════════════════════════════════════════════════
+    # Step 2: Node Identification & Unknown Variables
+    # ═══════════════════════════════════════════════════════════════════
+    s2_header = (
+        'Modified Nodal Analysis (MNA) extends standard Nodal Analysis by\n'
+        'introducing additional unknown variables for voltage-defined elements.\n\n'
+        'Why "Modified"? Standard Nodal Analysis uses only node voltages as\n'
+        'unknowns and requires all components to be described by admittance (Y=I/V).\n'
+        'However, voltage sources (V=const) and inductors (V=L·di/dt) are defined\n'
+        'by voltage constraints, not admittance. Their admittance is either infinite\n'
+        '(voltage source) or frequency-dependent in a way that couples voltage and\n'
+        'current. MNA solves this by adding the currents through these elements\n'
+        'as extra unknowns, and their defining equations as extra rows in the matrix.\n\n'
+    )
+    s2_lines = [f'Reference node (GND): {_node_label_plain(src_n)}  (voltage = 0)\n']
+    s2_lines.append('Node voltages (from KCL at each non-reference node):')
     for node in non_gnd_nodes:
         idx = nod2idx[node]
         if node >= 1000:
-            node_lines.append(f'  V{idx+1}  →  Virtual node {node} (series segment)')
+            s2_lines.append(f'  V{idx+1}  ->  Virtual node {node} (internal node of series segment)')
         else:
-            node_lines.append(f'  V{idx+1}  →  {_node_label_plain(node)}')
-    for i in range(m):
-        node_lines.append(f'  I_L{i+1}  →  Inductor current')
-    node_lines.append(f'  I_Vin  →  Source current')
+            s2_lines.append(f'  V{idx+1}  ->  {_node_label_plain(node)}')
+    if m > 0:
+        s2_lines.append(f'\nInductor currents (because V = L·di/dt is a voltage constraint,')
+        s2_lines.append(f'  the inductor current must be an extra unknown):')
+        for i in range(m):
+            s2_lines.append(f'  I_L{i+1}  ->  Current through inductor {i+1}')
+    s2_lines.append(f'\nVoltage source current (because Vin is a voltage constraint,')
+    s2_lines.append(f'  its current I_Vin must be an extra unknown):')
+    s2_lines.append(f'  I_Vin  ->  Current delivered by the voltage source')
+    s2_lines.append(f'\nTotal unknowns: {n + m + 1}  ({n} node voltages + {m} inductor currents + 1 source current)')
     steps.append({
         'title': 'Step 2: Node Identification & Unknown Variables',
-        'content': f'Total unknowns: {n + m + 1}  ({n} node voltages + {m} inductor currents + 1 source current)\n' + '\n'.join(node_lines),
+        'content': s2_header + '\n'.join(s2_lines),
         'type': 'text',
     })
 
-    # ── Step 3: Admittance Stamps (type: text) ──
+    # ═══════════════════════════════════════════════════════════════════
+    # Step 3: Admittance Stamps & Stamping Rules
+    # ═══════════════════════════════════════════════════════════════════
+    s3_header = (
+        'Each component contributes ("stamps") values into the MNA matrix.\n'
+        'The stamping rules for a component between node i and node j:\n\n'
+        '  Resistor (G=1/R):  Y[i,i]+=G,  Y[j,j]+=G,  Y[i,j]-=G,  Y[j,i]-=G\n'
+        '  Capacitor (Y=sC):  same pattern with sC instead of G\n'
+        '  Inductor (V=sL·I): adds current variable I_Lk and equations:\n'
+        '      Row i: +1 at I_Lk column  |  Row j: -1 at I_Lk column\n'
+        '      I_Lk row: +1 at Vi, -1 at Vj, -sL at I_Lk (diagonal)\n'
+        '  Wire (short): modeled as very large conductance G ~ 1e9\n'
+        '  Voltage source: adds I_Vin variable and constraint V_node = Vin\n\n'
+        'Components in the linearized circuit (after Step 1 replacements):\n'
+    )
     comp_lines = []
+    # Build a map from (from,to,value) to origin info for traceability
     for e in edges:
         t = e.get('type')
         f_n, t_n = e['from'], e['to']
         val = e.get('value', 0)
+        fi = nod2idx.get(f_n, '?')
+        ti = nod2idx.get(t_n, '?')
+        loc_str = f'{_node_label_plain(f_n)} -> {_node_label_plain(t_n)}'
+        idx_str = f'(matrix rows/cols: {fi}, {ti})' if fi != '?' and ti != '?' else ''
         if t == 'resistor':
             g_val = 1.0/val if val > 0 else 1e9
-            comp_lines.append(f'  R={_fmt_val(val)}Ω  ({_node_label_plain(f_n)} → {_node_label_plain(t_n)})  →  G={_fmt_val(g_val)}')
+            # Check if this R came from a linearized MOSFET/Diode
+            origin = ''
+            if raw_user_edges:
+                for orig in raw_user_edges:
+                    if orig.get('from') == f_n and orig.get('to') == t_n:
+                        if orig.get('type') == 'mosfet':
+                            origin = f'  [from MOSFET Rds(on)]'
+                            break
+                        elif orig.get('type') == 'diode':
+                            origin = f'  [from Diode R_on]'
+                            break
+            comp_lines.append(f'  R = {_fmt_val(val)} Ohm  ({loc_str})  ->  G = {_fmt_val(g_val)}{origin}  {idx_str}')
         elif t == 'capacitor':
-            comp_lines.append(f'  C={_fmt_val(val)}F  ({_node_label_plain(f_n)} → {_node_label_plain(t_n)})  →  Y=sC={_fmt_val(val)}·s')
+            comp_lines.append(f'  C = {_fmt_val(val)} F    ({loc_str})  ->  Y = {_fmt_val(val)}*s  {idx_str}')
         elif t == 'inductor':
-            comp_lines.append(f'  L={_fmt_val(val)}H  ({_node_label_plain(f_n)} → {_node_label_plain(t_n)})  →  Z=sL={_fmt_val(val)}·s')
+            comp_lines.append(f'  L = {_fmt_val(val)} H    ({loc_str})  ->  Z = {_fmt_val(val)}*s  {idx_str}')
         elif t == 'none':
-            comp_lines.append(f'  Wire  ({_node_label_plain(f_n)} → {_node_label_plain(t_n)})  →  G≈∞')
+            comp_lines.append(f'  Wire              ({loc_str})  ->  G ~ 1e9  {idx_str}')
     steps.append({
-        'title': 'Step 3: Admittance Stamps (after linearization)',
-        'content': '\n'.join(comp_lines) if comp_lines else 'No components',
+        'title': 'Step 3: Admittance Stamps & Stamping Rules',
+        'content': s3_header + '\n'.join(comp_lines),
         'type': 'text',
     })
 
-    # ── Step 4: MNA Matrix Equation (type: latex) ──
+    # ═══════════════════════════════════════════════════════════════════
+    # Step 4: MNA Matrix Equation [Y]·[X] = [I]
+    # ═══════════════════════════════════════════════════════════════════
     x_labels = []
     for node in non_gnd_nodes:
         idx = nod2idx[node]
@@ -297,28 +427,75 @@ def _build_derivation_steps(edges, non_gnd_nodes, nod2idx, Ls, M, F, X_sol_vec, 
         mna_eq = m_latex + ' \\cdot ' + x_latex + ' = ' + f_latex
     except Exception:
         mna_eq = None
+
+    s4_text = (
+        'The stamps from Step 3 are assembled into the matrix below.\n'
+        f'Matrix size: {n+m+1} x {n+m+1}  '
+        f'(rows 1~{n}: KCL for each node'
+    )
+    if m > 0:
+        s4_text += f', rows {n+1}~{n+m}: inductor V-I equations'
+    s4_text += f', row {n+m+1}: voltage source constraint)'
+    steps.append({
+        'title': 'Step 4a: Matrix Assembly Description',
+        'content': s4_text,
+        'type': 'text',
+    })
     if mna_eq:
         steps.append({
-            'title': 'Step 4: MNA Matrix Equation  [Y]·[X] = [I]',
+            'title': 'Step 4b: MNA Matrix Equation  [Y]·[X] = [I]',
             'content': mna_eq,
             'type': 'latex',
         })
     else:
         steps.append({
-            'title': 'Step 4: MNA Matrix Equation  [Y]·[X] = [I]',
-            'content': 'Matrix too large to display.',
+            'title': 'Step 4b: MNA Matrix Equation  [Y]·[X] = [I]',
+            'content': 'Matrix too large to render in LaTeX.',
             'type': 'text',
         })
 
-    # ── Step 5: Solve → Transfer Function (type: latex) ──
+    # ═══════════════════════════════════════════════════════════════════
+    # Step 5: Solve for H(s)
+    # ═══════════════════════════════════════════════════════════════════
     out_p_lbl = _node_label_latex(out_p)
     out_n_lbl = _node_label_latex(out_n)
+
+    # Try to show the unsimplified Vout expression
+    v_out_p_expr = X_sol_vec[nod2idx[out_p], 0] if out_p in nod2idx else sp.Integer(0)
+    v_out_n_expr = X_sol_vec[nod2idx[out_n], 0] if out_n in nod2idx else sp.Integer(0)
+    vout_raw = v_out_p_expr - v_out_n_expr
+
+    s5_text = (
+        f'Solving [Y]·[X] = [I] by matrix inversion: [X] = [Y]^(-1) · [I]\n\n'
+        f'The output is defined as:\n'
+        f'  V_out(s) = V({_node_label_plain(out_p)}) - V({_node_label_plain(out_n)})\n\n'
+        f'Since Vin(s) = 1 (unit excitation in the MNA formulation):\n'
+        f'  H(s) = V_out(s) / V_in(s) = V_out(s)\n\n'
+        f'The symbolic result is simplified and expressed as a ratio of\n'
+        f'polynomials in s (see the H(s) result above).'
+    )
     steps.append({
-        'title': 'Step 5: Solve for H(s)',
+        'title': 'Step 5a: Solving the Matrix Equation',
+        'content': s5_text,
+        'type': 'text',
+    })
+
+    # Show the LaTeX formula
+    try:
+        vout_simplified = simplify(vout_raw)
+        num_v, den_v = sp.fraction(sp.together(vout_simplified))
+        nc = _cleanup_and_get_coeffs(num_v)
+        dc = _cleanup_and_get_coeffs(den_v)
+        h_latex_final = _coeffs_to_latex(nc, dc)
+    except Exception:
+        h_latex_final = latex(vout_raw)
+
+    steps.append({
+        'title': 'Step 5b: Transfer Function H(s)',
         'content': (
             f'V_{{out}} = V({out_p_lbl}) - V({out_n_lbl})'
             r' \quad \Rightarrow \quad '
-            r'H(s) = \frac{V_{out}(s)}{V_{in}(s)}'
+            f'H(s) = {h_latex_final}'
         ),
         'type': 'latex',
     })
